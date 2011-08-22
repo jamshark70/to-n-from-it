@@ -1,12 +1,13 @@
 ~dir = thisProcess.nowExecutingPath.dirname;
 
-s.boot;
+s.waitForBoot {
+	b.free;
+	b = (~dir +/+ "samp/02*").pathMatch.collect { |path| Buffer.read(s, path) };
+	m = MixerChannel(\test, s, 2, 2, level: -25.dbamp);
+	MixingBoard(\x, nil, m);
+};
 
-b.free;
-b = (~dir +/+ "samp/02*").pathMatch.collect { |path| Buffer.read(s, path) };
-
-m = MixerChannel(\test, s, 2, 2, level: -25.dbamp);
-MixingBoard(\x, nil, m);
+ChuckableBrowser.newWindow;
 
 
 b[0].duration  // c. 11 sec
@@ -24,11 +25,10 @@ a = m.play {
 l = List.new;
 OSCdef(\tr, { |msg| l.add(msg[3] - (256/44100)) }, '/tr', s.addr);
 OSCdef(\n_end, { |msg|
-	if(msg[1] == a.nodeID) {
 		OSCdef(\tr.debug("removing")).free;
 		OSCdef(\n_end).free;
-	};
-}, '/n_end', s.addr);
+}, ['/n_end', a.nodeID], s.addr);
+
 
 a.free;
 
@@ -203,3 +203,88 @@ u = SimpleController(p).put(\stopped, { "done".postln; u.remove });
 q.listArgs
 
 p.stop;
+
+
+// thinking of multiple synths for fx: PR(\basicSynthChooser)
+(
+BP(\i2).free;
+PR(\basicSynthChooser).chuck(BP(\i2), nil, (
+	inChannels: 2,
+	dir: thisProcess.nowExecutingPath.dirname,
+	userprep: {
+		~bufs = (~dir +/+ "samp/02*").pathMatch.collect { |path| Buffer.read(s, path) };
+	},
+	userfree: { ~bufs.free },
+	synth: \grain,
+	objects: { (
+		grain: (
+			def: ~makeDef.(\grain)
+		)
+	) },
+	makeDef: { |name, fxfunc|
+		SynthDef(name, { |bufnum, rate = 1, start, time = 1,
+			attack = 0.5, release = 0.5,
+			amp = 0.1, pan = 0, out|
+			var	sig = PlayBuf.ar(1, bufnum, rate, 1, start),
+			eg = EnvGen.ar(Env(#[0, 1, 1, 0], [attack, max(0, 1.0 - attack - release), release], \sin),
+				timeScale: time, doneAction: 2);
+			if(fxfunc.isFunction) {
+				sig = SynthDef.wrap(fxfunc, prependArgs: [sig]);
+			};
+			Out.ar(out, Pan2.ar(sig * eg, pan, amp));
+		})
+	},
+	// oldBasePattern: PR(\basicSynthChooser).v[\basePattern],
+	// basePattern: {
+	// 	Pchain(
+	// 		if(~debug, DebugPbind, Pbind)
+	// 		.new(
+	// 		),
+	// 		~oldBasePattern.()
+	// 	)
+	// },
+	makeOnePattern: { |time = 0.12, dur = 15, deltaMul(rrand(0.16, 0.3)), amp = 1, pan(1.0.rand2)|
+		var wts = #[5, 5, 2, 1].normalizeSum;
+		Pbind(
+			\synthKey, BPStream(\synth),
+			\instrument, Pfunc({ |ev|
+				(ev[\synthKey] == \rest).if({ \rest },
+					{ ~objects[ev[\synthKey]].tryPerform(\at, \name) ? \rest })
+			}),
+			\type, \grain,
+			\bufnum, b.choose.bufnum,
+			\start, ((~onsets.choose / ~bufs[0].duration) + Pwhite(-0.03, 0.03, inf)) * ~bufs[0].numFrames,
+			\time, time,
+			\delta, Pconst(dur, Pser(Array.fill(rrand(3, 6), { #[1, 2, 3, 4].wchoose(wts) }), inf) * deltaMul),
+			\amp, amp,
+			\pan, pan
+		)
+	},
+	asPattern: {
+		Pspawner({ |sp|
+			var	tenv = Env(#[0.12, 0.25, 0.12], #[9.5, 9.5], \sin),
+			deltaMulEnv = Env(#[1.0, 0.1, 1.0], #[9.5, 9.5], 4),
+			waitEnv = Env(#[3.0, 0.3, 3.0], 9.5 ! 2, -2),
+			dur;
+			20.do { |wt|
+				dur = waitEnv.at(wt);
+				sp.par(~makeOnePattern.(tenv.at(wt), max(7, dur * 4), deltaMulEnv.at(wt) * rrand(0.3, 0.5)));
+				sp.wait(dur.debug("waiting"));
+			};
+		}).collect { |ev|
+			if(ev[\synthKey].notNil and: { ev[\synthKey] != \rest }) {
+				~getUserArgs.(ev);
+			} { ev };
+		}
+	},
+	// not big enough to warrant a separate data file
+	onsets: #[ 1.0513292959206e-07, 0.1973732978903, 0.33669554897176, 0.7836877972685, 0.91139986821043, 1.1552138597571, 1.3583921463095, 1.4802990228735, 1.7299181491934, 1.9040708810888, 2.0317828924261, 2.2988174230658, 2.4961905748449, 2.6819534570776, 2.8735215932928, 3.065089729508, 3.4192004472815, 3.6339888841711, 4.2203035623633, 4.318989780625, 4.4060664445959, 4.5744142801367, 4.7833977014624, 5.1491184503637, 5.3522968561255, 5.4567885667883, 5.7064075738989, 5.9676366121374, 6.252086189469, 6.3623829156958, 6.4900951654516, 6.7222991258703, 6.8325958520971, 6.9312820703589, 7.0531893045508, 7.2795877725683, 7.4479356081091, 7.5292067796789, 7.6220884592138, 8.0284452707373, 8.1909876138769, 8.3070898325049, 8.4231910974585, 8.5741243631445, 8.7714967996679, 9.1314125330053, 9.5261593134009, 10.083448436936, 10.298236873826, 10.472389248093, 10.681372669419, 10.925187137803 ]
+));
+)
+
+MixingBoard.at(0).add(BP(\i2));
+
+BP(\i2).alwaysReset = true;
+0 => BP(\i2);
+
+BP(\i2).debug = false;
