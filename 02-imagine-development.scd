@@ -215,34 +215,62 @@ PR(\basicSynthChooser).chuck(BP(\i2), nil, (
 		~bufs = (~dir +/+ "samp/02*").pathMatch.collect { |path| Buffer.read(s, path) };
 	},
 	userfree: { ~bufs.free },
-	synth: \grain,
+	synth: Pwrand(#[grain, decim, reson, rcomb], #[5, 7, 1, 8].normalizeSum, inf),
 	objects: { (
 		grain: (
 			def: ~makeDef.(\grain)
+		),
+		rcomb: (
+			def: ~makeDef.(\grainrcomb, { |sig, fftsize = 128, wipe = 0.5|
+				var	fft = FFT(LocalBuf(fftsize, 1), sig);
+				fft = PV_RandComb(fft, wipe);
+				IFFT(fft)
+			}, true),
+			args: [
+				fftsize: 128,
+				wipe: Pwhite(0.3, 0.8, inf),
+				amp: Pkey(\amp) * Pkey(\wipe).linlin(0.3, 0.8, 1, 0.7)
+			]
+		),
+		decim: (
+			def: ~makeDef.(\graindecim, { |sig, resolution = 0.125, rateMul = 0.25, lpf = 19000|
+				sig = Latch.ar(sig.round(resolution), Impulse.ar(SampleRate.ir * rateMul));
+				LPF.ar(sig, lpf);
+			}),
+			args: [
+				resolution: Pwhite(8, 48, inf).reciprocal,
+				rateMul: Pwhite(4, 12, inf).reciprocal
+			]
+		),
+		reson: (
+			def: ~makeDef.(\grainreson, { |sig, ffreq = 2000, ringtime = 1, preamp = 1|
+				Ringz.ar(sig, ffreq, ringtime, preamp).distort
+			}, true),
+			args: [
+				ffreq: Pexprand(300, 1800, inf),
+				ringtime: Pexprand(0.2, 0.8, inf),
+				preamp: Pwhite(1.0, 3.0, inf),
+				amp: Pkey(\amp) * (-12.dbamp)
+			]
 		)
 	) },
-	makeDef: { |name, fxfunc|
+	makeDef: { |name, fxfunc, ringing = false|
 		SynthDef(name, { |bufnum, rate = 1, start, time = 1,
 			attack = 0.5, release = 0.5,
 			amp = 0.1, pan = 0, out|
 			var	sig = PlayBuf.ar(1, bufnum, rate, 1, start),
 			eg = EnvGen.ar(Env(#[0, 1, 1, 0], [attack, max(0, 1.0 - attack - release), release], \sin),
-				timeScale: time, doneAction: 2);
+				timeScale: time, doneAction: if(ringing) { 0 } { 2 });
 			if(fxfunc.isFunction) {
+				if(ringing) { sig = sig * eg };
 				sig = SynthDef.wrap(fxfunc, prependArgs: [sig]);
 			};
-			Out.ar(out, Pan2.ar(sig * eg, pan, amp));
+			if(ringing) {
+				DetectSilence.ar(sig, doneAction: 2)
+			};
+			Out.ar(out, Pan2.ar(sig * if(ringing) { 1 } { eg }, pan, amp));
 		})
 	},
-	// oldBasePattern: PR(\basicSynthChooser).v[\basePattern],
-	// basePattern: {
-	// 	Pchain(
-	// 		if(~debug, DebugPbind, Pbind)
-	// 		.new(
-	// 		),
-	// 		~oldBasePattern.()
-	// 	)
-	// },
 	makeOnePattern: { |time = 0.12, dur = 15, deltaMul(rrand(0.16, 0.3)), amp = 1, pan(1.0.rand2)|
 		var wts = #[5, 5, 2, 1].normalizeSum;
 		Pbind(
@@ -260,16 +288,18 @@ PR(\basicSynthChooser).chuck(BP(\i2), nil, (
 			\pan, pan
 		)
 	},
+	tenv: Env(#[0.12, 0.25, 0.12], #[9.5, 9.5], \sin),
+	deltaMulEnv: Env(#[1.0, 0.1, 1.0], #[9.5, 9.5], #[1, 3]),
+	waitEnv: Env(#[3.0, 0.3, 3.0], 9.5 ! 2, -2),
+	ampEnv: { |dur| Env(#[1, 0.1], [dur], \exp) },
 	asPattern: {
 		Pspawner({ |sp|
-			var	tenv = Env(#[0.12, 0.25, 0.12], #[9.5, 9.5], \sin),
-			deltaMulEnv = Env(#[1.0, 0.1, 1.0], #[9.5, 9.5], 4),
-			waitEnv = Env(#[3.0, 0.3, 3.0], 9.5 ! 2, -2),
-			dur;
+			var	wait, dur;
 			20.do { |wt|
-				dur = waitEnv.at(wt);
-				sp.par(~makeOnePattern.(tenv.at(wt), max(7, dur * 4), deltaMulEnv.at(wt) * rrand(0.3, 0.5)));
-				sp.wait(dur.debug("waiting"));
+				wait = ~waitEnv.at(wt);
+				dur = max(7, wait * 4);
+				sp.par(~makeOnePattern.(~tenv.at(wt), dur, ~deltaMulEnv.at(wt) * rrand(0.3, 0.5), ~ampEnv.(dur)));
+				sp.wait(wait.debug("waiting"));
 			};
 		}).collect { |ev|
 			if(ev[\synthKey].notNil and: { ev[\synthKey] != \rest }) {
@@ -280,11 +310,72 @@ PR(\basicSynthChooser).chuck(BP(\i2), nil, (
 	// not big enough to warrant a separate data file
 	onsets: #[ 1.0513292959206e-07, 0.1973732978903, 0.33669554897176, 0.7836877972685, 0.91139986821043, 1.1552138597571, 1.3583921463095, 1.4802990228735, 1.7299181491934, 1.9040708810888, 2.0317828924261, 2.2988174230658, 2.4961905748449, 2.6819534570776, 2.8735215932928, 3.065089729508, 3.4192004472815, 3.6339888841711, 4.2203035623633, 4.318989780625, 4.4060664445959, 4.5744142801367, 4.7833977014624, 5.1491184503637, 5.3522968561255, 5.4567885667883, 5.7064075738989, 5.9676366121374, 6.252086189469, 6.3623829156958, 6.4900951654516, 6.7222991258703, 6.8325958520971, 6.9312820703589, 7.0531893045508, 7.2795877725683, 7.4479356081091, 7.5292067796789, 7.6220884592138, 8.0284452707373, 8.1909876138769, 8.3070898325049, 8.4231910974585, 8.5741243631445, 8.7714967996679, 9.1314125330053, 9.5261593134009, 10.083448436936, 10.298236873826, 10.472389248093, 10.681372669419, 10.925187137803 ]
 ));
-)
-
-MixingBoard.at(0).add(BP(\i2));
 
 BP(\i2).alwaysReset = true;
 0 => BP(\i2);
+if(MixingBoard.at(0).w.isClosed.not) { MixingBoard.at(0).add(BP(\i2)) };
+)
 
-BP(\i2).debug = false;
+BP(\i2).resonamp = Pkey(\amp) * (-18.dbamp);
+BP(\i2).synth = Pwrand(#[grain, decim, reson, rcomb], #[5, 5, 1, 5].normalizeSum, inf);
+
+BP(\i2).ampEnv = { |dur| Env(#[1, 0.1], [dur], -5) };
+
+BP(\i2).rcombamp = Pkey(\amp) * Pkey(\wipe).linlin(0.3, 0.8, 1, 0.7);
+
+z = BP(\i2);
+
+z.listVars
+z.waitEnv.postcs
+z.waitEnv = Env(#[3.0, 0.3, 3.0], 9.5 ! 2, -2),
+
+d = BP(\i2).makeDef(\grainreson, { |sig, ffreq = 2000, ringtime = 1, preamp = 1|
+	Ringz.ar(sig, ffreq, ringtime, preamp).distort
+}, true).add;
+
+m.play((
+	instrument: \grainreson,
+	bufnum: z.bufs[0],
+	start: z.onsets.choose * z.bufs[0].sampleRate,
+	time: 0.2,
+	amp: 1,
+	ffreq: exprand(300, 1800),
+	ringtime: 0.5,
+	preamp: 1
+));
+
+d = BP(\i2).makeDef(\graindecim, { |sig, resolution = 0.125, rateMul = 0.25, lpf = 19000|
+	sig = Latch.ar(sig.round(resolution), Impulse.ar(SampleRate.ir * rateMul));
+	LPF.ar(sig, lpf);
+}).add;
+
+m.play((
+	instrument: \graindecim,
+	bufnum: z.bufs[0],
+	start: z.onsets.choose * z.bufs[0].sampleRate,
+	time: 0.2,
+	amp: 1,
+	resolution: 1/32,
+	rateMul: 1/32,
+	attack: 0.05,
+	decay: 0.95
+));
+
+d = BP(\i2).makeDef(\grainrcomb, { |sig, fftsize = 128, wipe = 0.5|
+	var	fft = FFT(LocalBuf(fftsize, 1), sig);
+	fft = PV_RandComb(fft, wipe);
+	IFFT(fft)
+}, true).add;
+
+m.play((
+	instrument: \grainrcomb,
+	bufnum: z.bufs[0],
+	start: z.onsets.choose * z.bufs[0].sampleRate,
+	time: 0.2,
+	amp: 1,
+	fftsize: 128,
+	wipe: rrand(0.3, 0.8),
+	attack: 0.05,
+	decay: 0.95
+));
+
