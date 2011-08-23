@@ -250,9 +250,9 @@ PR(\basicSynthChooser).chuck(BP(\i2), nil, (
 			}, true),
 			args: [
 				ffreq: Pexprand(300, 1800, inf),
-				ringtime: Pif(Pkey(\first), Pwhite(2.0, 5.0, inf), Pexprand(0.2, 0.8, inf)),
+				ringtime: Pif(Pkey(\first), Pexprand(0.6, 1.0), Pexprand(0.2, 0.8)),
 				preamp: Pwhite(1.0, 3.0, inf),
-				amp: Pkey(\amp) * (-12.dbamp)
+				amp: Pkey(\amp) * (-18.dbamp)
 			]
 		)
 	) },
@@ -291,19 +291,21 @@ PR(\basicSynthChooser).chuck(BP(\i2), nil, (
 			\pan, pan
 		)
 	},
-	tenv: Env(#[0.12, 0.25, 0.12], #[9.5, 9.5], \sin),
-	deltaMulEnv: Env(#[1.0, 0.1, 1.0], #[9.5, 9.5], #[1, 3]),
-	waitEnv: Env(#[3.0, 0.3, 3.0], 9.5 ! 2, -2),
-	ampEnv: { |dur| Env(#[1, 0.1], [dur], \exp) },
+	tenv: Env(#[0.12, 0.4, 0.12], #[25, 15], \sin),
+	deltaMulEnv: Env(#[0.6, 0.4, 0.9], #[25, 15], #[1, 3]),
+	waitEnv: Env(#[5.0, 3.0, 0.7, 3.0], #[5, 20, 15], #[lin, -3, -2.5]),
+	ampEnv: { |dur| Env(#[1, 0.4], [dur], -5) },
 	deltaMul: Pwhite(0.3, 0.5, inf),
+	pan: Pwhite(0.2, 0.9, inf) * Pseq(#[-1, 1], inf, { 2.rand }),
 	asPattern: {
 		~deltaMulStream ?? { ~makeStreamForKey.(\deltaMul) };
+		~panStream ?? { ~makeStreamForKey.(\pan) };
 		Pspawner({ |sp|
 			var	wait, dur, start = Ptime().asStream, totaldur = ~waitEnv.times.sum, now;
 			while { (now = start.next) < totaldur } {
 				wait = ~waitEnv.at(now);
 				dur = max(7, wait * 4);
-				sp.par(~makeOnePattern.(~tenv.at(now), dur, ~deltaMulEnv.at(now) * ~deltaMulStream.next, ~ampEnv.(dur)));
+				sp.par(~makeOnePattern.(~tenv.at(now), dur, ~deltaMulEnv.at(now) * ~deltaMulStream.next, ~ampEnv.(dur), ~panStream.next));
 				sp.wait(wait.debug("waiting"));
 			};
 		}).collect { |ev|
@@ -331,15 +333,15 @@ BP(\i2).rcombamp = Pkey(\amp) * Pkey(\wipe).linlin(0.3, 0.8, 1, 0.7);
 
 z = BP(\i2);
 
-x = #[15, 22];
-z.tenv = Env(#[0.12, 0.25, 0.12], x, \sin);
+x = #[25, 15];
+z.tenv = Env(#[0.12, 0.4, 0.12], x, \sin);
 z.deltaMulEnv = Env(#[0.6, 0.4, 0.9], x, #[1, 3]);
-z.waitEnv = Env(#[5.0, 3.0, 0.7, 3.0], #[5, 12, 20], #[lin, -3, -2.5]);
+z.waitEnv = Env(#[5.0, 3.0, 0.7, 3.0], #[5, 20, 15], #[lin, -3, -2.5]);
 
 z.resonamp.postcs
 z.resonamp = Pkey(\amp) * (-18.dbamp);
 z.resonringtime.postcs
-z.resonringtime = Pif(Pkey(\first), Pexprand(1.0, 1.4).trace(prefix: "long: "), Pexprand(0.2, 0.8));
+z.resonringtime = Pif(Pkey(\first), Pexprand(0.6, 1.0), Pexprand(0.2, 0.8));
 
 z.listVars
 z.waitEnv.postcs
