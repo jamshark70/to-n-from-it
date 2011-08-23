@@ -9,6 +9,8 @@ s.waitForBoot {
 
 ChuckableBrowser.newWindow;
 
+MT(1).gui;
+
 
 b[0].duration  // c. 11 sec
 
@@ -248,7 +250,7 @@ PR(\basicSynthChooser).chuck(BP(\i2), nil, (
 			}, true),
 			args: [
 				ffreq: Pexprand(300, 1800, inf),
-				ringtime: Pexprand(0.2, 0.8, inf),
+				ringtime: Pif(Pkey(\first), Pwhite(2.0, 5.0, inf), Pexprand(0.2, 0.8, inf)),
 				preamp: Pwhite(1.0, 3.0, inf),
 				amp: Pkey(\amp) * (-12.dbamp)
 			]
@@ -274,7 +276,8 @@ PR(\basicSynthChooser).chuck(BP(\i2), nil, (
 	makeOnePattern: { |time = 0.12, dur = 15, deltaMul(rrand(0.16, 0.3)), amp = 1, pan(1.0.rand2)|
 		var wts = #[5, 5, 2, 1].normalizeSum;
 		Pbind(
-			\synthKey, BPStream(\synth),
+			\first, Pseq([true, Pn(false, inf)], 1),
+			\synthKey, Pseq([\reson, BPStream(\synth)], 1),
 			\instrument, Pfunc({ |ev|
 				(ev[\synthKey] == \rest).if({ \rest },
 					{ ~objects[ev[\synthKey]].tryPerform(\at, \name) ? \rest })
@@ -292,13 +295,15 @@ PR(\basicSynthChooser).chuck(BP(\i2), nil, (
 	deltaMulEnv: Env(#[1.0, 0.1, 1.0], #[9.5, 9.5], #[1, 3]),
 	waitEnv: Env(#[3.0, 0.3, 3.0], 9.5 ! 2, -2),
 	ampEnv: { |dur| Env(#[1, 0.1], [dur], \exp) },
+	deltaMul: Pwhite(0.3, 0.5, inf),
 	asPattern: {
+		~deltaMulStream ?? { ~makeStreamForKey.(\deltaMul) };
 		Pspawner({ |sp|
-			var	wait, dur;
-			20.do { |wt|
-				wait = ~waitEnv.at(wt);
+			var	wait, dur, start = Ptime().asStream, totaldur = ~waitEnv.times.sum, now;
+			while { (now = start.next) < totaldur } {
+				wait = ~waitEnv.at(now);
 				dur = max(7, wait * 4);
-				sp.par(~makeOnePattern.(~tenv.at(wt), dur, ~deltaMulEnv.at(wt) * rrand(0.3, 0.5), ~ampEnv.(dur)));
+				sp.par(~makeOnePattern.(~tenv.at(now), dur, ~deltaMulEnv.at(now) * ~deltaMulStream.next, ~ampEnv.(dur)));
 				sp.wait(wait.debug("waiting"));
 			};
 		}).collect { |ev|
@@ -314,16 +319,27 @@ PR(\basicSynthChooser).chuck(BP(\i2), nil, (
 BP(\i2).alwaysReset = true;
 0 => BP(\i2);
 if(MixingBoard.at(0).w.isClosed.not) { MixingBoard.at(0).add(BP(\i2)) };
+if(MT.exists(MIDIChannelIndex(0, 1))) { BP(\i2) => MT(1) };
 )
 
 BP(\i2).resonamp = Pkey(\amp) * (-18.dbamp);
 BP(\i2).synth = Pwrand(#[grain, decim, reson, rcomb], #[5, 5, 1, 5].normalizeSum, inf);
 
-BP(\i2).ampEnv = { |dur| Env(#[1, 0.1], [dur], -5) };
+BP(\i2).ampEnv = { |dur| Env(#[1, 0.4], [dur], -5) };
 
 BP(\i2).rcombamp = Pkey(\amp) * Pkey(\wipe).linlin(0.3, 0.8, 1, 0.7);
 
 z = BP(\i2);
+
+x = #[15, 22];
+z.tenv = Env(#[0.12, 0.25, 0.12], x, \sin);
+z.deltaMulEnv = Env(#[0.6, 0.4, 0.9], x, #[1, 3]);
+z.waitEnv = Env(#[5.0, 3.0, 0.7, 3.0], #[5, 12, 20], #[lin, -3, -2.5]);
+
+z.resonamp.postcs
+z.resonamp = Pkey(\amp) * (-18.dbamp);
+z.resonringtime.postcs
+z.resonringtime = Pif(Pkey(\first), Pexprand(1.0, 1.4).trace(prefix: "long: "), Pexprand(0.2, 0.8));
 
 z.listVars
 z.waitEnv.postcs
