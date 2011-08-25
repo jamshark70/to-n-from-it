@@ -13,7 +13,14 @@ MT(1).gui;
 
 b[0].numFrames
 
+~saveaddr = s.addr;
+~debugaddr = DebugNetAddr("127.0.0.1", 57110);
 
+s.addr = ~debugaddr;
+s.addr = ~saveaddr;
+
+s.stopAliveThread;
+s.startAliveThread;
 
 a = m.play {
 	var	bufFr = BufFrames.ir(b[0]),
@@ -76,12 +83,13 @@ SynthDef(\buzz, { |bufnum, tfreq, start, gdur = 0.1, rate = 1, pan,
 		sr = SampleRate.ir;
 	sig = Latch.ar(sig, Impulse.ar(sr * dratio));
 	sig = LPF.ar(sig.round(0.01), lpfreq)
-		* EnvGen.kr(Env.asr(0.01, 1, releaseTime), gate, doneAction: 2);
+		* EnvGen.kr(Env.asr(0.01, 1, releaseTime, -7), gate, doneAction: 2);
 	Out.ar(out, sig)
 }).add;
 
 (
-if(t.isRunning) { t.stop };
+var dur = 40, release = 5;
+if(t.tryPerform(\isRunning) ? false) { t.stop };
 t = TLSequenceIterator([
 	{
 		~tfreq = GenericGlobalControl(\tfreq, nil, 18, #[1, 20]);
@@ -92,16 +100,43 @@ t = TLSequenceIterator([
 		~lpfreq = GenericGlobalControl(\lpfreq, nil, 19000, \freq);
 		0
 	},
+	gcAutoSynthCmd: (gc: e { ~start }, outName: \out,
+		/*name: \ctlEnv,*/ time: { ~dur ? 1 }, connect: 0, dur: dur + release,
+		// env: Env(#[0.6, 0.01, 0.1], #[0.9, 0.1], \sin)
+		id: \startctl,
+		name: {
+			max(0, EnvGen.kr(Env(#[0.6, 0.2, 0.0, 0.1], [dur - 0.5, 0.4, release + 0.1], \sin))
+				+ LFDNoise1.kr(LFNoise1.kr(1.2).range(0.2, 3), 0.03))
+		}
+	),
+	gcAutoSynthCmd: (gc: e { ~pan }, outName: \out,
+		name: { LFNoise1.kr(7) * XLine.kr(0.01, 1, dur, doneAction: 2) }
+	),
+	gcAutoSynthCmd: (gc: e { ~dratio }, outName: \outbus,
+		name: \ctlEnv, time: { ~dur ? 1 }, connect: 0, dur: dur + release,
+		env: Env(#[0.8, 0.08], #[1], 4)
+	),
+	gcAutoSynthCmd: (gc: e { ~tfreq }, outName: \outbus,
+		name: \ctlEnv, time: { ~dur ? 1 }, connect: 0, dur: dur,
+		env: Env(#[6, 18], #[1], \sin)
+	),
+	gcAutoSynthCmd: (gc: e { ~dur }, outName: \out,
+		name: { (topEnvironment[\tfreq].kr * 20) }
+	),
+	// gcAutoSynthCmd: (gc: e { ~start }, outName: \outbus,
+	// 	name: \ctlEnv, time: { ~dur ? 1 }, connect: 0,
+	// 	env: 
+	// ),
 	{
 		// damn lazy init
 		PR(\synthCmd).copy.putAll((
 			id: \bz, name: \buzz, target: m.synthgroup, out: m.inbus, bufnum: b[0],
 			tfreq: ~tfreq.asMap, start: ~start.asMap, gdur: ~dur.asMap, pan: ~pan.asMap,
 			dratio: ~dratio.asMap, lpfreq: ~lpfreq.asMap,
-			dur: 3
+			dur: dur, releaseTime: release
 		))
 	},
-	// another ugly hack - maybe i'd be better off with the BP
+	// synthCmd ends after 'dur' beats, but I need to wait until the synth is gone
 	funcCmd: (
 		setDoneSignal: {
 			~doneSignal = SimpleController(~iterator.findActive(\bz).node)
@@ -110,10 +145,12 @@ t = TLSequenceIterator([
 		clearDoneSignal: { ~doneSignal.remove }
 	),
 	\cmdSync,
-	{
+	funcCmd: (func: {
 		"done".postln;
-		0
-	}
+		~iterator.activeCmds.copy.do { |cmd|
+			if(cmd !== currentEnvironment) { cmd.stop };
+		};
+	})
 ]).play;
 u.remove;
 u = SimpleController(t).put(\done, {
@@ -123,4 +160,23 @@ u = SimpleController(t).put(\done, {
 });
 )
 
+#[startctl, bz].do { |key| t.findActive(key).node.trace };
+
 t.stop;
+
+s.addr = ~debugaddr;
+s.addr = ~saveaddr;
+
+Error.debug = true;
+Error.debug = false;
+
+
+PR(\gcAutoSynthCmd).openFile;
+PR(\gcAutoSynthCmd).listMethods;
+PR(\gcAutoSynthCmd).v[\superFire].postcs
+PR(\gcAutoSynthCmd).v[\fire].postcs
+
+BusDict
+
+
+m.play((instrument: \bufGrainPan, time: b[0].duration, bufnum: b[0], amp: 1));
